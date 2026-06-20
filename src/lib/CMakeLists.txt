@@ -38,6 +38,17 @@ add_library(r2sql STATIC
 )
 add_library(r2sql::r2sql ALIAS r2sql)
 
+# In a pipe-only build the libr backend lives nowhere else, so compile its
+# R2SQL_HAVE_LIBR=0 stub (open_libr() -> nullptr, libr_data_dir_status())
+# straight into the core library. This honors backend.hpp's contract that
+# open_libr() is ALWAYS linkable (returning nullptr without libr support).
+# When the full flavor is enabled the real definition comes from the
+# r2sql_libr OBJECT library below, so adding it here would duplicate the
+# symbol — hence the guard.
+if(NOT R2SQL_FULL_ENABLED)
+  target_sources(r2sql PRIVATE src/backend_libr.cpp)
+endif()
+
 target_include_directories(r2sql
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

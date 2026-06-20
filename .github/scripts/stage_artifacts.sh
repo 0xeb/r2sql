@@ -12,19 +12,37 @@ set -euo pipefail
 
 PFX="${GITHUB_WORKSPACE}/r2prefix"
 
-# radare2's system plugin dir, RELATIVE to the prefix, derived from the
-# installed layout (no need to run radare2 — that needs a complete prefix with
-# share/ on PATH and otherwise drops into r2pipe mode):
+# radare2's system plugin dir, RELATIVE to the prefix, derived from the installed
+# layout. We do NOT run radare2 to ask it: `radare2 -H R2_LIBR_PLUGINS` drops into
+# the "R2PIPE_(IN|OUT) environment not set" error and exits non-zero whenever
+# stdin/stdout are pipes (exactly the CI case), so it is not a reliable oracle.
 #   * Windows (meson): <prefix>/lib/plugins
-#   * Unix    (meson): <prefix>/<libdir>/radare2/<version>  (libdir may be lib,
-#     lib64, or lib/<triplet>), so locate the versioned dir under the prefix.
+#   * Unix    (meson): <prefix>/<libdir>/radare2/<version>  (libdir = lib, lib64,
+#     or lib/<triplet>)
+# The catch: the default meson build links the core plugins statically, so on Unix
+# <libdir>/radare2/<version> need NOT exist on disk after install (the overlay
+# creates it). So we can't just scan for that directory — we reconstruct its path:
+#   <version> from the always-present data dir share/radare2/<version>, and
+#   <libdir>  from where libr_core actually landed.
 if [ -d "${PFX}/lib/plugins" ]; then
   REL_PLUGIN="lib/plugins"
 else
-  PLUG_ABS="$(find "${PFX}" -type d -path '*/radare2/*' 2>/dev/null \
-                | grep -E '/radare2/[0-9][^/]*$' | head -1)"
-  [ -n "${PLUG_ABS}" ] || { echo "ERROR: radare2 plugin dir not found under ${PFX}" >&2; exit 1; }
-  REL_PLUGIN="${PLUG_ABS#"${PFX}/"}"
+  VER_DIR="$(find "${PFX}" -type d -path '*/radare2/*' 2>/dev/null \
+               | grep -E '/radare2/[0-9][^/]*$' | head -1)"
+  [ -n "${VER_DIR}" ] || { echo "ERROR: cannot determine radare2 version under ${PFX}" >&2; exit 1; }
+  R2_VER="$(basename "${VER_DIR}")"
+
+  # Match the library (libr_core.dylib/.so/.a/.6.1.7.dylib …), NOT the header
+  # r_core.h — hence the 'lib' prefix, which the Unix shared/static lib always
+  # carries and the include never does. (Windows, whose import lib is r_core.lib,
+  # took the lib/plugins branch above and never reaches here.)
+  CORE_LIB="$(find "${PFX}" -maxdepth 4 -name 'libr_core.*' 2>/dev/null | head -1)"
+  [ -n "${CORE_LIB}" ] || { echo "ERROR: libr_core not found under ${PFX}" >&2; exit 1; }
+  # CORE_LIB is rooted at ${PFX} (it came from `find "${PFX}"`), so dirname keeps
+  # that prefix and the strip below yields the libdir relative to the prefix.
+  REL_LIBDIR="$(dirname "${CORE_LIB}")"
+  REL_LIBDIR="${REL_LIBDIR#"${PFX}/"}"
+  REL_PLUGIN="${REL_LIBDIR}/radare2/${R2_VER}"
 fi
 echo "radare2 plugin overlay dir: ${REL_PLUGIN}"
 
