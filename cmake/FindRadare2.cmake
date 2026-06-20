@@ -52,7 +52,8 @@ set(Radare2_FOUND FALSE)
 set(_r2_resolved_root "")
 
 foreach(_root IN LISTS _r2_search_roots)
-  if(EXISTS "${_root}/include/libr/r_core.h" AND EXISTS "${_root}/lib")
+  if(EXISTS "${_root}/include/libr/r_core.h"
+     AND (EXISTS "${_root}/lib" OR EXISTS "${_root}/lib64"))
     set(_r2_resolved_root "${_root}")
     set(Radare2_FOUND TRUE)
     break()
@@ -80,9 +81,25 @@ endif()
 if(Radare2_FOUND AND Radare2_ROOT)
   set(Radare2_INCLUDE_DIRS "${Radare2_ROOT}/include/libr"
                            "${Radare2_ROOT}/include/libr/sdb")
-  set(Radare2_LIBRARY_DIRS "${Radare2_ROOT}/lib")
 
-  set(_pc "${Radare2_ROOT}/lib/pkgconfig/r_core.pc")
+  # radare2's libdir under the prefix varies by platform/build: plain lib, lib64,
+  # or lib/<multiarch-triplet> — meson's default on Debian/Ubuntu installs to
+  # lib/x86_64-linux-gnu. Locate it from where libr_core actually landed; if we
+  # assumed lib/ we would find NO libraries there, leave Radare2_LIBRARIES empty,
+  # and link r2sql-full / the plugin with zero radare2 libs — which compiles and
+  # links "cleanly" right up to a wall of undefined r_core_* references.
+  set(_r2_libdir "${Radare2_ROOT}/lib")
+  file(GLOB _r2_core_glob
+       "${Radare2_ROOT}/lib/libr_core.*"   "${Radare2_ROOT}/lib/r_core.*"
+       "${Radare2_ROOT}/lib64/libr_core.*" "${Radare2_ROOT}/lib64/r_core.*"
+       "${Radare2_ROOT}/lib/*/libr_core.*" "${Radare2_ROOT}/lib/*/r_core.*")
+  if(_r2_core_glob)
+    list(GET _r2_core_glob 0 _r2_core0)
+    get_filename_component(_r2_libdir "${_r2_core0}" DIRECTORY)
+  endif()
+  set(Radare2_LIBRARY_DIRS "${_r2_libdir}")
+
+  set(_pc "${_r2_libdir}/pkgconfig/r_core.pc")
   if(EXISTS "${_pc}")
     file(STRINGS "${_pc}" _pclines REGEX "^Version:")
     if(_pclines)
@@ -97,11 +114,11 @@ if(Radare2_FOUND AND Radare2_ROOT)
   foreach(_lib IN LISTS _r2_libs)
     set(_full "")
     foreach(_ext ".lib" ".dll.a" ".so" ".dylib" ".a")
-      if(EXISTS "${Radare2_ROOT}/lib/${_lib}${_ext}")
-        set(_full "${Radare2_ROOT}/lib/${_lib}${_ext}")
+      if(EXISTS "${_r2_libdir}/${_lib}${_ext}")
+        set(_full "${_r2_libdir}/${_lib}${_ext}")
         break()
-      elseif(EXISTS "${Radare2_ROOT}/lib/lib${_lib}${_ext}")
-        set(_full "${Radare2_ROOT}/lib/lib${_lib}${_ext}")
+      elseif(EXISTS "${_r2_libdir}/lib${_lib}${_ext}")
+        set(_full "${_r2_libdir}/lib${_lib}${_ext}")
         break()
       endif()
     endforeach()
