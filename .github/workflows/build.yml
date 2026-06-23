@@ -100,6 +100,15 @@ jobs:
         with:
           arch: amd64
 
+      # Git-for-Windows ships a GNU coreutils link.exe in /usr/bin that shadows
+      # MSVC's linker on the Git-Bash PATH, so meson aborts radare2's configure
+      # with "Found GNU link.exe instead of MSVC link.exe". Removing it (the
+      # filesystem change persists for the whole job) lets both the meson radare2
+      # build and the cmake/ninja r2sql build below find MSVC's real link.exe.
+      - name: Remove GNU link.exe so MSVC link.exe wins
+        shell: bash
+        run: rm -f /usr/bin/link /usr/bin/link.exe
+
       - name: Install meson + ninja
         shell: bash
         run: pip install meson ninja
