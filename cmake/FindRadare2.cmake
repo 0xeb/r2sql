@@ -79,6 +79,12 @@ if(NOT Radare2_FOUND)
 endif()
 
 if(Radare2_FOUND AND Radare2_ROOT)
+  # Normalize separators: on Windows, Git-Bash passes -DRadare2_ROOT as
+  # "D:\a\...\r2prefix" (backslashes), and file(GLOB) treats backslashes as escapes
+  # rather than separators, so the libdir glob below matches nothing and we end up
+  # linking zero radare2 libs. TO_CMAKE_PATH forces forward slashes everywhere.
+  file(TO_CMAKE_PATH "${Radare2_ROOT}" Radare2_ROOT)
+
   set(Radare2_INCLUDE_DIRS "${Radare2_ROOT}/include/libr"
                            "${Radare2_ROOT}/include/libr/sdb")
 
@@ -132,6 +138,17 @@ if(Radare2_FOUND AND Radare2_ROOT)
       list(APPEND Radare2_LIBRARIES Radare2::${_lib})
     endif()
   endforeach()
+
+  # A resolved root but an empty library set means consumers (r2sql-full, the
+  # plugin) would link with NO radare2 libs and die on a wall of undefined
+  # r_core_* symbols. Surface it at configure time instead.
+  list(LENGTH Radare2_LIBRARIES _r2_nlibs)
+  message(STATUS "FindRadare2: libdir='${_r2_libdir}', resolved ${_r2_nlibs} libraries")
+  if(_r2_nlibs EQUAL 0)
+    message(WARNING "FindRadare2: found radare2 at '${Radare2_ROOT}' but located ZERO "
+                    "import libraries under '${_r2_libdir}'. Full/plugin links will fail "
+                    "with undefined r_core_* symbols.")
+  endif()
 
   if(NOT TARGET Radare2::libr)
     add_library(Radare2::libr INTERFACE IMPORTED)
