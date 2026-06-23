@@ -99,6 +99,11 @@ if(Radare2_FOUND AND Radare2_ROOT)
        "${Radare2_ROOT}/lib/libr_core.*"   "${Radare2_ROOT}/lib/r_core.*"
        "${Radare2_ROOT}/lib64/libr_core.*" "${Radare2_ROOT}/lib64/r_core.*"
        "${Radare2_ROOT}/lib/*/libr_core.*" "${Radare2_ROOT}/lib/*/r_core.*")
+  # r_core.* also matches pkgconfig's r_core.pc, which is NOT a library and lives
+  # in lib/pkgconfig/ — and since file(GLOB) sorts its results, that .pc sorts
+  # ahead of lib/r_core.lib and would mis-resolve the libdir to lib/pkgconfig
+  # (zero libraries). Drop any pkgconfig / .pc match.
+  list(FILTER _r2_core_glob EXCLUDE REGEX "(/pkgconfig/|\\.pc$)")
   if(_r2_core_glob)
     list(GET _r2_core_glob 0 _r2_core0)
     get_filename_component(_r2_libdir "${_r2_core0}" DIRECTORY)
