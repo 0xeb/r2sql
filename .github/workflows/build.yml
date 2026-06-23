@@ -120,8 +120,13 @@ jobs:
           git -C r2src remote add origin https://github.com/radareorg/radare2
           git -C r2src fetch --depth 1 origin "$R2_REF"
           git -C r2src checkout --detach FETCH_HEAD
+          # radare2's libr/util/arena.c uses C11 `_Static_assert`, but radare2's
+          # meson sets no c_std and MSVC's default C mode doesn't recognize that
+          # keyword ("syntax error: missing ')' before 'sizeof'"). Request C11 so
+          # meson passes /std:c11 to cl. (Windows job only; Linux/macOS keep the
+          # compiler default — gcc/clang already accept _Static_assert.)
           meson setup r2src/b r2src --prefix="$GITHUB_WORKSPACE/r2prefix" \
-            --buildtype=release -Dsdb_cgen=false
+            --buildtype=release -Dsdb_cgen=false -Dc_std=c11
           ninja -C r2src/b
           ninja -C r2src/b install
 
