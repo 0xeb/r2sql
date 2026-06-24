@@ -11,38 +11,48 @@
 set -euo pipefail
 
 PFX="${GITHUB_WORKSPACE}/r2prefix"
+# On Windows runners GITHUB_WORKSPACE is a backslash path (D:\a\r2sql\r2sql),
+# which find/grep/test choke on under Git-Bash. Normalize to a Unix-style path
+# (cygpath exists only in Git-Bash; a no-op elsewhere).
+if command -v cygpath >/dev/null 2>&1; then
+  PFX="$(cygpath -u "${GITHUB_WORKSPACE}")/r2prefix"
+fi
 
 # radare2's system plugin dir, RELATIVE to the prefix, derived from the installed
-# layout. We do NOT run radare2 to ask it: `radare2 -H R2_LIBR_PLUGINS` drops into
-# the "R2PIPE_(IN|OUT) environment not set" error and exits non-zero whenever
-# stdin/stdout are pipes (exactly the CI case), so it is not a reliable oracle.
-#   * Windows (meson): <prefix>/lib/plugins
+# layout (we do NOT run radare2 — `radare2 -H` drops into r2pipe mode under CI
+# pipes). The default meson build links the core plugins statically, so the
+# plugin dir often does NOT exist on disk after install (the overlay creates it):
+#   * Windows (meson): <prefix>/lib/plugins                 — and there is no
+#     */radare2/<version> dir at all, so the scan below finds nothing.
 #   * Unix    (meson): <prefix>/<libdir>/radare2/<version>  (libdir = lib, lib64,
-#     or lib/<triplet>)
-# The catch: the default meson build links the core plugins statically, so on Unix
-# <libdir>/radare2/<version> need NOT exist on disk after install (the overlay
-# creates it). So we can't just scan for that directory — we reconstruct its path:
-#   <version> from the always-present data dir share/radare2/<version>, and
-#   <libdir>  from where libr_core actually landed.
+#     or lib/<triplet>), reconstructed from the data-dir <version> and where
+#     libr_core landed.
+# `|| true` keeps an empty find from tripping pipefail+errexit (which would kill
+# the script before it prints anything — exactly the Windows symptom).
+REL_PLUGIN=""
 if [ -d "${PFX}/lib/plugins" ]; then
   REL_PLUGIN="lib/plugins"
 else
   VER_DIR="$(find "${PFX}" -type d -path '*/radare2/*' 2>/dev/null \
-               | grep -E '/radare2/[0-9][^/]*$' | head -1)"
-  [ -n "${VER_DIR}" ] || { echo "ERROR: cannot determine radare2 version under ${PFX}" >&2; exit 1; }
-  R2_VER="$(basename "${VER_DIR}")"
-
-  # Match the library (libr_core.dylib/.so/.a/.6.1.7.dylib …), NOT the header
-  # r_core.h — hence the 'lib' prefix, which the Unix shared/static lib always
-  # carries and the include never does. (Windows, whose import lib is r_core.lib,
-  # took the lib/plugins branch above and never reaches here.)
-  CORE_LIB="$(find "${PFX}" -maxdepth 4 -name 'libr_core.*' 2>/dev/null | head -1)"
-  [ -n "${CORE_LIB}" ] || { echo "ERROR: libr_core not found under ${PFX}" >&2; exit 1; }
-  # CORE_LIB is rooted at ${PFX} (it came from `find "${PFX}"`), so dirname keeps
-  # that prefix and the strip below yields the libdir relative to the prefix.
-  REL_LIBDIR="$(dirname "${CORE_LIB}")"
-  REL_LIBDIR="${REL_LIBDIR#"${PFX}/"}"
-  REL_PLUGIN="${REL_LIBDIR}/radare2/${R2_VER}"
+               | grep -E '/radare2/[0-9][^/]*$' | head -1 || true)"
+  if [ -n "${VER_DIR}" ]; then
+    R2_VER="$(basename "${VER_DIR}")"
+    # Match the import/shared lib (libr_core.* on Unix, r_core.lib on Windows),
+    # never the header r_core.h.
+    CORE_LIB="$(find "${PFX}" -maxdepth 4 \
+                  \( -name 'libr_core.*' -o -name 'r_core.lib' -o -name 'r_core.dll.a' \) \
+                  2>/dev/null | head -1 || true)"
+    if [ -n "${CORE_LIB}" ]; then
+      REL_LIBDIR="$(dirname "${CORE_LIB}")"
+      REL_LIBDIR="${REL_LIBDIR#"${PFX}/"}"
+      REL_PLUGIN="${REL_LIBDIR}/radare2/${R2_VER}"
+    fi
+  fi
+fi
+# Fallback (Windows static-plugin builds expose no versioned dir): radare2 looks
+# for system plugins in <prefix>/lib/plugins.
+if [ -z "${REL_PLUGIN}" ]; then
+  REL_PLUGIN="lib/plugins"
 fi
 echo "radare2 plugin overlay dir: ${REL_PLUGIN}"
 
