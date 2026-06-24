@@ -19,6 +19,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Build every static library — including the fetched libxsql and fastmcpp — as
+# position-independent code. The core_r2sql plugin is a shared module, and on
+# Linux GNU ld refuses to link non-PIC static objects into a .so
+# ("relocation R_X86_64_TPOFF32 against `__tls_guard' ... recompile with -fPIC",
+# seen with fastmcpp_core). Must be set BEFORE the deps are fetched/added so the
+# FetchContent targets inherit it. No-op on macOS/Windows (PIC by default).
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 # Detect standalone vs subproject build (mirrors libxsql's pattern).
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   set(R2SQL_STANDALONE ON)

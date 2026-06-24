@@ -11,20 +11,48 @@
 set -euo pipefail
 
 PFX="${GITHUB_WORKSPACE}/r2prefix"
+# On Windows runners GITHUB_WORKSPACE is a backslash path (D:\a\r2sql\r2sql),
+# which find/grep/test choke on under Git-Bash. Normalize to a Unix-style path
+# (cygpath exists only in Git-Bash; a no-op elsewhere).
+if command -v cygpath >/dev/null 2>&1; then
+  PFX="$(cygpath -u "${GITHUB_WORKSPACE}")/r2prefix"
+fi
 
-# radare2's system plugin dir, RELATIVE to the prefix, derived from the
-# installed layout (no need to run radare2 — that needs a complete prefix with
-# share/ on PATH and otherwise drops into r2pipe mode):
-#   * Windows (meson): <prefix>/lib/plugins
-#   * Unix    (meson): <prefix>/<libdir>/radare2/<version>  (libdir may be lib,
-#     lib64, or lib/<triplet>), so locate the versioned dir under the prefix.
+# radare2's system plugin dir, RELATIVE to the prefix, derived from the installed
+# layout (we do NOT run radare2 — `radare2 -H` drops into r2pipe mode under CI
+# pipes). The default meson build links the core plugins statically, so the
+# plugin dir often does NOT exist on disk after install (the overlay creates it):
+#   * Windows (meson): <prefix>/lib/plugins                 — and there is no
+#     */radare2/<version> dir at all, so the scan below finds nothing.
+#   * Unix    (meson): <prefix>/<libdir>/radare2/<version>  (libdir = lib, lib64,
+#     or lib/<triplet>), reconstructed from the data-dir <version> and where
+#     libr_core landed.
+# `|| true` keeps an empty find from tripping pipefail+errexit (which would kill
+# the script before it prints anything — exactly the Windows symptom).
+REL_PLUGIN=""
 if [ -d "${PFX}/lib/plugins" ]; then
   REL_PLUGIN="lib/plugins"
 else
-  PLUG_ABS="$(find "${PFX}" -type d -path '*/radare2/*' 2>/dev/null \
-                | grep -E '/radare2/[0-9][^/]*$' | head -1)"
-  [ -n "${PLUG_ABS}" ] || { echo "ERROR: radare2 plugin dir not found under ${PFX}" >&2; exit 1; }
-  REL_PLUGIN="${PLUG_ABS#"${PFX}/"}"
+  VER_DIR="$(find "${PFX}" -type d -path '*/radare2/*' 2>/dev/null \
+               | grep -E '/radare2/[0-9][^/]*$' | head -1 || true)"
+  if [ -n "${VER_DIR}" ]; then
+    R2_VER="$(basename "${VER_DIR}")"
+    # Match the import/shared lib (libr_core.* on Unix, r_core.lib on Windows),
+    # never the header r_core.h.
+    CORE_LIB="$(find "${PFX}" -maxdepth 4 \
+                  \( -name 'libr_core.*' -o -name 'r_core.lib' -o -name 'r_core.dll.a' \) \
+                  2>/dev/null | head -1 || true)"
+    if [ -n "${CORE_LIB}" ]; then
+      REL_LIBDIR="$(dirname "${CORE_LIB}")"
+      REL_LIBDIR="${REL_LIBDIR#"${PFX}/"}"
+      REL_PLUGIN="${REL_LIBDIR}/radare2/${R2_VER}"
+    fi
+  fi
+fi
+# Fallback (Windows static-plugin builds expose no versioned dir): radare2 looks
+# for system plugins in <prefix>/lib/plugins.
+if [ -z "${REL_PLUGIN}" ]; then
+  REL_PLUGIN="lib/plugins"
 fi
 echo "radare2 plugin overlay dir: ${REL_PLUGIN}"
 
