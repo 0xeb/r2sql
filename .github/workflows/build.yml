@@ -158,13 +158,65 @@ jobs:
           if-no-files-found: error
 
   # ============================================================================
+  # macOS (Apple Silicon): pipe r2sql + full r2sql-full + plugin (one configure)
+  # ============================================================================
+  build-macos:
+    name: Build (macOS)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install meson + ninja
+        run: brew install meson ninja pkg-config
+
+      - name: Build radare2 -> prefix
+        run: |
+          # Fetch exactly the pinned commit; fail the job if it is unavailable
+          # (no silent fallback to a moving default branch).
+          git init r2src
+          git -C r2src remote add origin https://github.com/radareorg/radare2
+          git -C r2src fetch --depth 1 origin "$R2_REF"
+          git -C r2src checkout --detach FETCH_HEAD
+          meson setup r2src/b r2src --prefix="$GITHUB_WORKSPACE/r2prefix" \
+            --buildtype=release -Dsdb_cgen=false
+          ninja -C r2src/b
+          ninja -C r2src/b install
+
+      - name: Configure + build (pipe r2sql + full r2sql-full + plugin)
+        run: |
+          # One configure yields both flavors: the always-on pipe-only r2sql and
+          # (via R2SQL_BUILD_FULL) the in-process r2sql-full + core_r2sql plugin.
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DR2SQL_BUILD_FULL=ON -DRadare2_ROOT="$GITHUB_WORKSPACE/r2prefix"
+          cmake --build build --config Release
+
+      - name: Stage artifacts
+        shell: bash
+        run: bash .github/scripts/stage_artifacts.sh
+
+      - name: Upload overlay artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: r2sql-macos-overlay
+          path: dist/overlay/
+          if-no-files-found: error
+
+      - name: Upload pipe-only artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: r2sql-macos-pipe-only
+          path: dist/pipe/
+          if-no-files-found: error
+
+  # ============================================================================
   # Release — zip each artifact tree (zip root = the deployable layout) and
   # attach. Overlay zips extract on top of a radare2 install prefix.
   # ============================================================================
   publish-release:
     name: Publish Release
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build-linux, build-windows]
+    needs: [build-linux, build-windows, build-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write  # create the GitHub Release
@@ -191,4 +243,6 @@ jobs:
             r2sql-linux-pipe-only.zip
             r2sql-windows-overlay.zip
             r2sql-windows-pipe-only.zip
+            r2sql-macos-overlay.zip
+            r2sql-macos-pipe-only.zip
           generate_release_notes: true
